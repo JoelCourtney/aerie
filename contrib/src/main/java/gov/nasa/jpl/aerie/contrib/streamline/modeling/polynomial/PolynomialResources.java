@@ -1,5 +1,6 @@
 package gov.nasa.jpl.aerie.contrib.streamline.modeling.polynomial;
 
+import gov.nasa.jpl.aerie.contrib.serialization.mappers.BooleanValueMapper;
 import gov.nasa.jpl.aerie.contrib.streamline.core.*;
 import gov.nasa.jpl.aerie.contrib.streamline.core.CellRefV2.CommutativityTestInput;
 import gov.nasa.jpl.aerie.contrib.streamline.core.monads.DynamicsMonad;
@@ -9,7 +10,6 @@ import gov.nasa.jpl.aerie.contrib.streamline.modeling.clocks.Clock;
 import gov.nasa.jpl.aerie.contrib.streamline.modeling.discrete.Discrete;
 import gov.nasa.jpl.aerie.contrib.streamline.modeling.discrete.monads.DiscreteResourceMonad;
 import gov.nasa.jpl.aerie.contrib.streamline.modeling.linear.Linear;
-import gov.nasa.jpl.aerie.contrib.streamline.modeling.polynomial.LinearBoundaryConsistencySolver.Domain;
 import gov.nasa.jpl.aerie.contrib.streamline.unit_aware.StandardUnits;
 import gov.nasa.jpl.aerie.contrib.streamline.unit_aware.Unit;
 import gov.nasa.jpl.aerie.contrib.streamline.unit_aware.UnitAware;
@@ -17,6 +17,7 @@ import gov.nasa.jpl.aerie.contrib.streamline.unit_aware.UnitAwareOperations;
 import gov.nasa.jpl.aerie.contrib.streamline.unit_aware.UnitAwareResources;
 import gov.nasa.jpl.aerie.contrib.streamline.utils.DoubleUtils;
 import gov.nasa.jpl.aerie.merlin.framework.Condition;
+import gov.nasa.jpl.aerie.merlin.framework.ValueMapper;
 import gov.nasa.jpl.aerie.merlin.protocol.types.Duration;
 import org.apache.commons.lang3.mutable.MutableObject;
 
@@ -50,8 +51,6 @@ import static gov.nasa.jpl.aerie.contrib.streamline.modeling.black_box.SecantApp
 import static gov.nasa.jpl.aerie.contrib.streamline.modeling.clocks.ClockResources.clock;
 import static gov.nasa.jpl.aerie.contrib.streamline.modeling.discrete.Discrete.discrete;
 import static gov.nasa.jpl.aerie.contrib.streamline.modeling.discrete.DiscreteResources.assertThat;
-import static gov.nasa.jpl.aerie.contrib.streamline.modeling.discrete.DiscreteResources.choose;
-import static gov.nasa.jpl.aerie.contrib.streamline.modeling.polynomial.LinearBoundaryConsistencySolver.Comparison.*;
 import static gov.nasa.jpl.aerie.contrib.streamline.modeling.polynomial.LinearBoundaryConsistencySolver.LinearExpression.lx;
 import static gov.nasa.jpl.aerie.contrib.streamline.modeling.polynomial.Polynomial.polynomial;
 import static gov.nasa.jpl.aerie.contrib.streamline.unit_aware.UnitAwareResources.extend;
@@ -89,7 +88,7 @@ public final class PolynomialResources {
                          original.getCoefficient(i),
                          left.getCoefficient(i),
                          right.getCoefficient(i)));
-        })));
+        })), Polynomial.VALUE_MAPPER);
   }
 
   /**
@@ -197,7 +196,7 @@ public final class PolynomialResources {
                     relativeError,
                     MINUTE,
                     duration(24 * 30, HOUR),
-                    relative(errorByQuadraticApproximation(), epsilon))));
+                    relative(errorByQuadraticApproximation(), epsilon))), Linear.VALUE_MAPPER);
   }
 
   /**
@@ -229,7 +228,7 @@ public final class PolynomialResources {
         result = expiring(data, endTime.minus(t));
       }
       return pure(result);
-    }));
+    }), Polynomial.VALUE_MAPPER);
   }
 
   /**
@@ -319,7 +318,7 @@ public final class PolynomialResources {
    * </p>
    */
   public static Resource<Polynomial> integrate(Resource<Polynomial> integrand, double startingValue) {
-    var cell = resource(DynamicsMonad.map(integrand.getDynamics(), (Polynomial $) -> $.integral(startingValue)));
+    var cell = resource(DynamicsMonad.map(integrand.getDynamics(), (Polynomial $) -> $.integral(startingValue)), Polynomial.VALUE_MAPPER);
     // Use integrand's expiry but not integral's, since we're refreshing the integral
     wheneverDynamicsChange(integrand, integrandDynamics ->
         cell.emit(bindEffect(integral -> DynamicsMonad.map(integrandDynamics, integrand$ ->
@@ -509,7 +508,7 @@ public final class PolynomialResources {
    */
   public static Resource<Polynomial> movingAverage(Resource<Polynomial> p, Duration interval) {
     var pIntegral = integrate(p, 0);
-    var shiftedIntegral = shift(pIntegral, interval, polynomial(0));
+    var shiftedIntegral = shift(pIntegral, interval, polynomial(0), Polynomial.VALUE_MAPPER);
     var result = divide(subtract(pIntegral, shiftedIntegral), DiscreteResourceMonad.pure(interval.ratioOver(SECOND)));
     name(result, "Moving Average (%s)", p);
     return result;
@@ -532,25 +531,25 @@ public final class PolynomialResources {
   }
 
   public static Resource<Discrete<Boolean>> greaterThan(Resource<Polynomial> p, Resource<Polynomial> q) {
-    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.greaterThan(q$))));
+    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.greaterThan(q$))), Discrete.valueMapper(new BooleanValueMapper()));
     name(result, "(%s) > (%s)", p, q);
     return result;
   }
 
   public static Resource<Discrete<Boolean>> greaterThanOrEquals(Resource<Polynomial> p, Resource<Polynomial> q) {
-    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.greaterThanOrEquals(q$))));
+    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.greaterThanOrEquals(q$))), Discrete.valueMapper(new BooleanValueMapper()));
     name(result, "(%s) >= (%s)", p, q);
     return result;
   }
 
   public static Resource<Discrete<Boolean>> lessThan(Resource<Polynomial> p, Resource<Polynomial> q) {
-    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.lessThan(q$))));
+    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.lessThan(q$))), Discrete.valueMapper(new BooleanValueMapper()));
     name(result, "(%s) < (%s)", p, q);
     return result;
   }
 
   public static Resource<Discrete<Boolean>> lessThanOrEquals(Resource<Polynomial> p, Resource<Polynomial> q) {
-    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.lessThanOrEquals(q$))));
+    var result = signalling(bind(p, q, (Polynomial p$, Polynomial q$) -> pure(p$.lessThanOrEquals(q$))), Discrete.valueMapper(new BooleanValueMapper()));
     name(result, "(%s) <= (%s)", p, q);
     return result;
   }
@@ -562,7 +561,7 @@ public final class PolynomialResources {
    * @param bins Map from inclusive lower bound of a range, to the label for that range.
    *             The next entry in the map is the exclusive upper bound of that range.
    */
-  public static <A> Resource<Discrete<A>> binned(Resource<Polynomial> p, Resource<Discrete<NavigableMap<Double, A>>> bins) {
+  public static <A> Resource<Discrete<A>> binned(Resource<Polynomial> p, Resource<Discrete<NavigableMap<Double, A>>> bins, ValueMapper<A> mapper) {
     return signalling(bind(p, bins, (Polynomial p$, Discrete<NavigableMap<Double, A>> bins$) -> {
       var entry = bins$.extract().floorEntry(p$.extract());
       if (entry == null) {
@@ -574,7 +573,7 @@ public final class PolynomialResources {
       var upperExpiry = cutoff == null ? NEVER : p$.greaterThanOrEquals(polynomial(cutoff)).expiry();
       var lowerExpiry = p$.lessThan(polynomial(entry.getKey())).expiry();
       return pure(expiring(discrete(entry.getValue()), upperExpiry.or(lowerExpiry)));
-    }));
+    }), Discrete.valueMapper(mapper));
   }
 
   @SafeVarargs
@@ -583,7 +582,7 @@ public final class PolynomialResources {
   }
 
   public static Resource<Polynomial> min(Stream<Resource<Polynomial>> args) {
-    return signalling(reduce(args, constant(Double.POSITIVE_INFINITY), bind((p, q) -> pure(p.min(q))), "Min"));
+    return signalling(reduce(args, constant(Double.POSITIVE_INFINITY), bind((p, q) -> pure(p.min(q))), "Min"), Polynomial.VALUE_MAPPER);
   }
 
   @SafeVarargs
@@ -592,7 +591,7 @@ public final class PolynomialResources {
   }
 
   public static Resource<Polynomial> max(Stream<Resource<Polynomial>> args) {
-    return signalling(reduce(args, constant(Double.NEGATIVE_INFINITY), bind((p, q) -> pure(p.max(q))), "Max"));
+    return signalling(reduce(args, constant(Double.NEGATIVE_INFINITY), bind((p, q) -> pure(p.max(q))), "Max"), Polynomial.VALUE_MAPPER);
   }
 
   /**

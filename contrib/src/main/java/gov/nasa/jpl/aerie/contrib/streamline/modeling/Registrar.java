@@ -1,5 +1,6 @@
 package gov.nasa.jpl.aerie.contrib.streamline.modeling;
 
+import gov.nasa.jpl.aerie.contrib.serialization.mappers.DummyValueMapper;
 import gov.nasa.jpl.aerie.contrib.serialization.mappers.IntegerValueMapper;
 import gov.nasa.jpl.aerie.contrib.serialization.mappers.NullableValueMapper;
 import gov.nasa.jpl.aerie.contrib.serialization.mappers.StringValueMapper;
@@ -68,7 +69,7 @@ public class Registrar {
     Resources.init();
     this.baseRegistrar = baseRegistrar;
     this.errorBehavior = errorBehavior;
-    errors = resource(Discrete.discrete(Map.of()));
+    errors = resource(Discrete.discrete(Map.of()), new DummyValueMapper<>(Discrete.discrete(Map.of())));
     var errorString = map(errors, errors$ -> errors$.entrySet().stream().map(entry -> formatError(entry.getKey(), entry.getValue())).collect(joining("\n\n")));
 
     // Register the errors and number of errors resources for output

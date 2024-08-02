@@ -163,6 +163,30 @@ services:
     restart: always
     volumes:
       - aerie_file_store:/usr/src/app/merlin_file_store:ro
+  aerie_merlin_worker_3:
+    build:
+      context: ./merlin-worker
+      dockerfile: Dockerfile
+    container_name: aerie_merlin_worker_2
+    depends_on: ["postgres"]
+    environment:
+      AERIE_DB_HOST: postgres
+      AERIE_DB_PORT: 5432
+      MERLIN_DB_USER: "${MERLIN_USERNAME}"
+      MERLIN_DB_PASSWORD: "${MERLIN_PASSWORD}"
+      MERLIN_WORKER_LOCAL_STORE: /usr/src/app/merlin_file_store
+      SIMULATION_PROGRESS_POLL_PERIOD_MILLIS: 2000
+      JAVA_OPTS: >
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+        -Dorg.slf4j.simpleLogger.defaultLogLevel=DEBUG
+        -Dorg.slf4j.simpleLogger.log.com.zaxxer.hikari=INFO
+        -Dorg.slf4j.simpleLogger.logFile=System.err
+      UNTRUE_PLAN_START: "2000-01-01T11:58:55.816Z"
+    image: "aerie_merlin_worker_2"
+    ports: ["5123:5005", "27188:8080"]
+    restart: always
+    volumes:
+      - aerie_file_store:/usr/src/app/merlin_file_store:ro
   aerie_scheduler_worker_1:
     build:
       context: ./scheduler-worker

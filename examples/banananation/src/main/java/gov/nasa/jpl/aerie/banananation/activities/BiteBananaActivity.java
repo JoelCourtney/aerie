@@ -21,8 +21,6 @@ import gov.nasa.jpl.aerie.merlin.framework.annotations.Export.Validation;
 @ActivityType("BiteBanana")
 public final class BiteBananaActivity {
   @Parameter
-
-  @Banannotation("Specifies the size of bite to take")
   @Unit("m")
   public double biteSize = 1.0;
 

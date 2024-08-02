@@ -107,6 +107,8 @@ public final class SimulationDriver {
             final var steps = serializedTask.asMap().get().get("steps").asInt().get();
             final var reads = serializedTask.asMap().get().get("reads").asList().get();
 
+            final var readIterator = reads.iterator();
+
             final var lastStepTime = Duration.of(entrypoint.get("lastStepTime").asInt().get(), Duration.MICROSECONDS);
 
             final var taskFactory = deserializeActivity(missionModel, new SerializedActivity(type, args));
@@ -114,7 +116,8 @@ public final class SimulationDriver {
             final var scheduler = new Scheduler() {
               @Override
               public <State> State get(final CellId<State> cellId) {
-                return null; // TODO deserialize the next read
+                final var readValue = readIterator.next();
+
               }
 
               @Override

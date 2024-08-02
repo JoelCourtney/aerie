@@ -2,16 +2,21 @@ package gov.nasa.jpl.aerie.merlin.driver;
 
 import gov.nasa.jpl.aerie.merlin.driver.engine.SimulationEngine;
 import gov.nasa.jpl.aerie.merlin.driver.engine.SpanException;
+import gov.nasa.jpl.aerie.merlin.driver.engine.TaskEntryPoint;
 import gov.nasa.jpl.aerie.merlin.driver.json.SerializedValueJsonParser;
 import gov.nasa.jpl.aerie.merlin.driver.timeline.LiveCells;
 import gov.nasa.jpl.aerie.merlin.driver.timeline.Query;
 import gov.nasa.jpl.aerie.merlin.driver.timeline.TemporalEventSource;
+import gov.nasa.jpl.aerie.merlin.protocol.driver.CellId;
+import gov.nasa.jpl.aerie.merlin.protocol.driver.Scheduler;
 import gov.nasa.jpl.aerie.merlin.protocol.driver.Topic;
 import gov.nasa.jpl.aerie.merlin.protocol.model.Task;
 import gov.nasa.jpl.aerie.merlin.protocol.model.TaskFactory;
 import gov.nasa.jpl.aerie.merlin.protocol.types.Duration;
+import gov.nasa.jpl.aerie.merlin.protocol.types.InSpan;
 import gov.nasa.jpl.aerie.merlin.protocol.types.InstantiationException;
 import gov.nasa.jpl.aerie.merlin.protocol.types.SerializedValue;
+import gov.nasa.jpl.aerie.merlin.protocol.types.TaskStatus;
 import gov.nasa.jpl.aerie.merlin.protocol.types.Unit;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -20,7 +25,9 @@ import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.file.Files;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -29,6 +36,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+
+import static gov.nasa.jpl.aerie.merlin.protocol.types.Duration.ZERO;
 
 public final class SimulationDriver {
   public static <Model>
@@ -70,7 +79,7 @@ public final class SimulationDriver {
 
       final LiveCells cells;
 
-      final String inconsFile = "/Users/dailis/projects/aerie/worktrees/develop/fincons.json";
+      final String inconsFile = "fincons.json";
       if (new File(inconsFile).exists()) {
         try {
           cells = new LiveCells(timeline);
@@ -78,7 +87,7 @@ public final class SimulationDriver {
               Json
                   .createReader(new StringReader(Files.readString(Path.of(inconsFile))))
                   .readValue()).getSuccessOrThrow();
-          final var serializedCells = incons.asList().get();
+          final var serializedCells = incons.asMap().get().get("cells").asList().get();
           final var queries = missionModel.getInitialCells().queries();
 
           for (int i = 0; i < serializedCells.size(); i++) {
@@ -86,6 +95,55 @@ public final class SimulationDriver {
             final var query = queries.get(i);
 
             putCell(cells, query, serializedCell, missionModel.getInitialCells());
+          }
+
+          for (final var serializedTask : incons.asMap().get().get("tasks").asList().get()) {
+            final var entrypoint = serializedTask.asMap().get().get("entrypoint").asMap().get();
+            final var directive = entrypoint.get("directive").asMap().get();
+            final var startOffset = Duration.of(directive.get("startOffset").asInt().get(), Duration.MICROSECONDS);
+            final var type = directive.get("type").asString().get();
+            final var args = directive.get("args").asMap().get();
+
+            final var steps = serializedTask.asMap().get().get("steps").asInt().get();
+            final var reads = serializedTask.asMap().get().get("reads").asList().get();
+
+            final var lastStepTime = Duration.of(entrypoint.get("lastStepTime").asInt().get(), Duration.MICROSECONDS);
+
+            final var taskFactory = deserializeActivity(missionModel, new SerializedActivity(type, args));
+            final var task = taskFactory.create(engine.executor);
+            final var scheduler = new Scheduler() {
+              @Override
+              public <State> State get(final CellId<State> cellId) {
+                return null; // TODO deserialize the next read
+              }
+
+              @Override
+              public <Event> void emit(final Event event, final Topic<Event> topic) {
+
+              }
+
+              @Override
+              public void spawn(final InSpan taskSpan, final TaskFactory<?> task) {
+
+              }
+            };
+            TaskStatus<?> status = null;
+            for (var i = 0; i < steps; i++) {
+              status = task.step(scheduler);
+            }
+            final TaskStatus<?> $status =
+                switch (status) {
+                  case TaskStatus.AwaitingCondition<?> s -> s;
+                  case TaskStatus.CallingTask<?> s -> s;
+                  case TaskStatus.Completed<?> s -> s;
+                  case TaskStatus.Delayed<?> s -> TaskStatus.delayed(s.delay().minus(lastStepTime), s.continuation());
+                  case null -> null;
+                };
+            if ($status == null) {
+              engine.scheduleTask(ZERO, $ -> task, new TaskEntryPoint.Directive(new SerializedActivity(type, args)));
+            } else {
+              engine.scheduleTask(ZERO, $ -> Task.of($$ -> $status).andThen(task), new TaskEntryPoint.Directive(new SerializedActivity(type, args)));
+            }
           }
         } catch (IOException e) {
           throw new RuntimeException(e);
@@ -95,7 +153,7 @@ public final class SimulationDriver {
       }
 
       /* The current real time. */
-      var elapsedTime = Duration.ZERO;
+      var elapsedTime = ZERO;
 
       simulationExtentConsumer.accept(elapsedTime);
 
@@ -112,7 +170,7 @@ public final class SimulationDriver {
 
       try {
         // Start daemon task(s) immediately, before anything else happens.
-        engine.scheduleTask(Duration.ZERO, missionModel.getDaemon());
+        engine.scheduleTask(ZERO, missionModel.getDaemon(), new TaskEntryPoint.Daemon());
         {
           final var batch = engine.extractNextJobs(Duration.MAX_VALUE);
           final var commit = engine.performJobs(batch.jobs(), cells, elapsedTime, Duration.MAX_VALUE);
@@ -186,12 +244,62 @@ public final class SimulationDriver {
       }
 
       System.out.println("-----------------------------------------");
-      final var list = new ArrayList<SerializedValue>();
+      final var serializedCells = new ArrayList<SerializedValue>();
       for (final var query : missionModel.getInitialCells().queries()) {
         final var cell = cells.getCell(query);
-        list.add(cell.get().serialize());
+        serializedCells.add(cell.get().serialize());
       }
-      System.out.println(new SerializedValueJsonParser().unparse(SerializedValue.of(list)));
+      final var serializedTasks = new ArrayList<SerializedValue>();
+
+      // Task needs:
+      // - entry point
+      // - reads
+      // The entry point is either:
+      //   - An activity directive
+      //   - An activity directive with a path to a particular anonymous subtask. Enumerate calls and spawns. E.g:
+      //           Parent()->2->1 is the first child of the second child of Parent
+      // The list of reads is linear and contains parent and child reads combined???
+      //    Can we dedupe? Later...
+      // Number of steps
+
+      try {
+        // get unfinished tasks
+        // for each unfinished task, get its entrypoint
+
+        for (final var task : engine.tasks.keySet()) {
+          final var entrypoint = engine.entrypoints.get(task);
+          if (!(entrypoint instanceof TaskEntryPoint.Directive e)) continue;
+          serializedTasks.add(SerializedValue.of(Map.of(
+              "entrypoint", SerializedValue.of(Map.of(
+                  "directive", SerializedValue.of(Map.of(
+                      "startOffset",
+                      SerializedValue.of(Duration
+                                             .of(295, Duration.HOURS)
+                                             .plus(Duration.of(10, Duration.MINUTES))
+                                             .in(Duration.MICROSECONDS)),
+                      "type",
+                      SerializedValue.of(e.directive().getTypeName()),
+                      "args",
+                      SerializedValue.of(e.directive().getArguments()))),
+                  "lastStepTime", SerializedValue.of(Duration
+                                                         .of(14 * 24, Duration.HOURS)
+                                                         .minus(Duration
+                                                                    .of(295, Duration.HOURS)
+                                                                    .plus(Duration.of(10, Duration.MINUTES)))
+                                                         .in(Duration.MICROSECONDS))
+              )),
+              "reads", SerializedValue.of(List.of()),
+              "steps", SerializedValue.of(1)
+          )));
+        }
+
+        Files.write(Path.of(inconsFile), List.of(new SerializedValueJsonParser().unparse(SerializedValue.of(Map.of(
+            "cells", SerializedValue.of(serializedCells),
+            "tasks", SerializedValue.of(serializedTasks)
+        ))).toString()), StandardOpenOption.CREATE);
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
 
       final var topics = missionModel.getTopics();
       return SimulationEngine.computeResults(engine, simulationStartTime, elapsedTime, activityTopic, timeline, topics);
@@ -215,7 +323,7 @@ public final class SimulationDriver {
       var timeline = new TemporalEventSource();
       var cells = new LiveCells(timeline, missionModel.getInitialCells());
       /* The current real time. */
-      var elapsedTime = Duration.ZERO;
+      var elapsedTime = ZERO;
 
       // Begin tracking all resources.
       for (final var entry : missionModel.getResources().entrySet()) {
@@ -226,7 +334,7 @@ public final class SimulationDriver {
       }
 
       // Start daemon task(s) immediately, before anything else happens.
-      engine.scheduleTask(Duration.ZERO, missionModel.getDaemon());
+      engine.scheduleTask(ZERO, missionModel.getDaemon(), new TaskEntryPoint.Daemon());
       {
         final var batch = engine.extractNextJobs(Duration.MAX_VALUE);
           final var commit = engine.performJobs(batch.jobs(), cells, elapsedTime, Duration.MAX_VALUE);
@@ -237,7 +345,7 @@ public final class SimulationDriver {
       }
 
       // Schedule all activities.
-      final var spanId = engine.scheduleTask(elapsedTime, task);
+      final var spanId = engine.scheduleTask(elapsedTime, task, new TaskEntryPoint.Daemon());
 
       // Drive the engine until we're out of time.
       // TERMINATION: Actually, we might never break if real time never progresses forward.
@@ -286,7 +394,7 @@ public final class SimulationDriver {
           resolved,
           missionModel,
           activityTopic
-      ));
+      ), new TaskEntryPoint.Directive(schedule.get(directiveId).serializedActivity()));
     }
   }
 

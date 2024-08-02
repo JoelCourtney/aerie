@@ -76,12 +76,15 @@ public final class SimulationEngine implements AutoCloseable {
   /** The set of queries depending on a given set of topics. */
   private final Subscriptions<Topic<?>, ResourceId> waitingResources;
 
-  /** The execution state for every task. */
-  private final Map<TaskId, ExecutionState<?>> tasks;
+  /** The execution state for every in-progress task. */
+  public final Map<TaskId, ExecutionState<?>> tasks;
   /** The getter for each tracked condition. */
   private final Map<ConditionId, Condition> conditions;
   /** The profiling state for each tracked resource. */
   private final Map<ResourceId, ProfilingState<?>> resources;
+
+  /** Keeps track of entry points for all in-progress tasks */
+  public final Map<TaskId, TaskEntryPoint> entrypoints;
 
   /** Tasks that have been scheduled, but not started */
   private final Map<TaskId, Duration> unstartedTasks;
@@ -92,7 +95,7 @@ public final class SimulationEngine implements AutoCloseable {
   private final Map<SpanId, MutableInt> spanContributorCount;
 
   /** A thread pool that modeled tasks can use to keep track of their state between steps. */
-  private final ExecutorService executor;
+  public final ExecutorService executor;
 
   public SimulationEngine() {
     numActiveSimulationEngines++;
@@ -107,6 +110,7 @@ public final class SimulationEngine implements AutoCloseable {
     unstartedTasks = new LinkedHashMap<>();
     spans = new LinkedHashMap<>();
     spanContributorCount = new LinkedHashMap<>();
+    entrypoints = new LinkedHashMap<>();
     executor = Executors.newVirtualThreadPerTaskExecutor();
   }
 
@@ -137,10 +141,11 @@ public final class SimulationEngine implements AutoCloseable {
     for (final var entry : other.spanContributorCount.entrySet()) {
       spanContributorCount.put(entry.getKey(), new MutableInt(entry.getValue().getValue()));
     }
+    entrypoints = other.entrypoints;
   }
 
   /** Schedule a new task to be performed at the given time. */
-  public <Output> SpanId scheduleTask(final Duration startTime, final TaskFactory<Output> state) {
+  public <Output> SpanId scheduleTask(final Duration startTime, final TaskFactory<Output> state, final TaskEntryPoint entrypoint) {
     if (this.closed) throw new IllegalStateException("Cannot schedule task on closed simulation engine");
     if (startTime.isNegative()) throw new IllegalArgumentException("Cannot schedule a task before the start time of the simulation");
 
@@ -153,6 +158,8 @@ public final class SimulationEngine implements AutoCloseable {
     this.scheduledJobs.schedule(JobId.forTask(task), SubInstant.Tasks.at(startTime));
 
     this.unstartedTasks.put(task, startTime);
+
+    this.entrypoints.put(task, entrypoint);
 
     return span;
   }
@@ -662,7 +669,7 @@ public final class SimulationEngine implements AutoCloseable {
             startTime.plus(state.startOffset().in(Duration.MICROSECONDS), ChronoUnit.MICROS),
             spanToSimulatedActivityId.get(activityParents.get(span)),
             activityChildren.getOrDefault(span, Collections.emptyList()).stream().map(spanToSimulatedActivityId::get).toList(),
-            (activityParents.containsKey(span)) ? Optional.empty() : Optional.of(directiveId)
+            (activityParents.containsKey(span)) ? Optional.empty() : Optional.ofNullable(directiveId)
         ));
       }
     });

@@ -4,6 +4,7 @@ import gov.nasa.jpl.aerie.merlin.driver.engine.SimulationEngine;
 import gov.nasa.jpl.aerie.merlin.driver.engine.SlabList;
 import gov.nasa.jpl.aerie.merlin.driver.engine.SpanException;
 import gov.nasa.jpl.aerie.merlin.driver.engine.SpanId;
+import gov.nasa.jpl.aerie.merlin.driver.engine.TaskEntryPoint;
 import gov.nasa.jpl.aerie.merlin.driver.timeline.LiveCells;
 import gov.nasa.jpl.aerie.merlin.driver.timeline.TemporalEventSource;
 import gov.nasa.jpl.aerie.merlin.protocol.driver.Topic;
@@ -66,7 +67,7 @@ public class CheckpointSimulationDriver {
 
       {
         // Start daemon task(s) immediately, before anything else happens.
-        engine.scheduleTask(Duration.ZERO, missionModel.getDaemon());
+        engine.scheduleTask(Duration.ZERO, missionModel.getDaemon(), new TaskEntryPoint.Daemon());
         {
           final var batch = engine.extractNextJobs(Duration.MAX_VALUE);
           final var commit = engine.performJobs(batch.jobs(), cells, Duration.ZERO, Duration.MAX_VALUE);
@@ -436,7 +437,7 @@ public class CheckpointSimulationDriver {
             computedStartTime,
             executor ->
                 Task.run(scheduler -> scheduler.emit(directiveIdToSchedule, activityTopic))
-                    .andThen(task.create(executor)));
+                    .andThen(task.create(executor)), new TaskEntryPoint.Directive(serializedDirective));
         activityToTask.put(directiveIdToSchedule, taskId);
         if (resolved.containsKey(directiveIdToSchedule)) {
           toCheckForDependencyScheduling.put(directiveIdToSchedule, taskId);

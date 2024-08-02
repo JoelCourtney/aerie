@@ -4,6 +4,7 @@ import gov.nasa.jpl.aerie.merlin.protocol.driver.Scheduler;
 import gov.nasa.jpl.aerie.merlin.protocol.driver.Topic;
 import gov.nasa.jpl.aerie.merlin.protocol.types.Duration;
 import gov.nasa.jpl.aerie.merlin.protocol.types.InSpan;
+import gov.nasa.jpl.aerie.merlin.protocol.types.SerializedValue;
 import gov.nasa.jpl.aerie.merlin.protocol.types.TaskStatus;
 import gov.nasa.jpl.aerie.merlin.protocol.types.Unit;
 
@@ -42,6 +43,18 @@ public interface Task<Output> {
    * @return a copy of this Task that can be stepped independently from this Task
    */
   default Task<Output> duplicate(Executor executor) {
+    throw new UnsupportedOperationException("Tasks must implement duplicate in order to be used in a simulation checkpoint");
+  }
+
+  /**
+   * Produce a copy of this Task that can be stepped independently from this Task
+   *
+   * <p>Clients must not invoke {@code duplicate()} after {@link #step(Scheduler)} or {@link #release()}
+   * has been invoked.</p>
+   * @param executor the executor to use for the new Task
+   * @return a copy of this Task that can be stepped independently from this Task
+   */
+  default SerializedValue serialize(Executor executor) {
     throw new UnsupportedOperationException("Tasks must implement duplicate in order to be used in a simulation checkpoint");
   }
 
